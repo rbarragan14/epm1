@@ -1,0 +1,1008 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "e509f12b",
+   "metadata": {},
+   "source": [
+    "# BYOM "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "cd9e61ef",
+   "metadata": {},
+   "source": [
+    "## 1. Desarrollo/Entrenamiento del modelo"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "51689909",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import pandas as pd\n",
+    "import getpass\n",
+    "\n",
+    "from teradataml import (\n",
+    "    create_context, \n",
+    "    remove_context,\n",
+    "    get_context,\n",
+    "    get_connection,\n",
+    "    DataFrame,\n",
+    "    retrieve_byom,\n",
+    "    PMMLPredict,\n",
+    "    configure)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "b3e6ec9c",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdin",
+     "output_type": "stream",
+     "text": [
+      "Password: ··········\n"
+     ]
+    }
+   ],
+   "source": [
+    "#username = input(\"Username: \")\n",
+    "#password = getpass.getpass(\"Password: \")\n",
+    "#val_db = input(\"VAL DB: \")\n",
+    "#byom_db = input(\"BYOM DB: \")\n",
+    "\n",
+    "# configure byom/val installation\n",
+    "#configure.val_install_location = val_db\n",
+    "#configure.byom_install_location = byom_db\n",
+    "\n",
+    "# by default we assume your are using your user database. change as required\n",
+    "database = \"rb255002\"\n",
+    "\n",
+    "password = getpass.getpass(\"Password:\")\n",
+    "host = \"tdprd.td.teradata.com\"\n",
+    "username = \"rb255002\"\n",
+    "#password = \"\"\n",
+    "\n",
+    "# VAL DB: TRNG_XSP\n",
+    "# BYOM DB:TRNG_BYOM\n",
+    "\n",
+    "\n",
+    "context=create_context(host=host, username=username, database=database, password=password, logmech=\"TDNEGO\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "5c11e259",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Finished training\n"
+     ]
+    }
+   ],
+   "source": [
+    "from xgboost import XGBClassifier\n",
+    "from sklearn.preprocessing import MinMaxScaler\n",
+    "from sklearn.pipeline import Pipeline\n",
+    "\n",
+    "\n",
+    "train_pdf = DataFrame.from_query(\"\"\"\n",
+    "SELECT \n",
+    "    F.*, D.hasdiabetes \n",
+    "FROM pima_patient_features F\n",
+    "JOIN pima_patient_diagnoses D\n",
+    "    ON F.patientid = D.patientid \n",
+    "    WHERE F.patientid MOD 5 <> 0\n",
+    "\"\"\").to_pandas(all_rows=True)\n",
+    "\n",
+    "features = [\"NumTimesPrg\", \"Age\", \"PlGlcConc\", \"BloodP\", \"SkinThick\", \"TwoHourSerIns\", \"BMI\", \"DiPedFunc\"]\n",
+    "target = \"HasDiabetes\"\n",
+    "\n",
+    "# split data into X and y\n",
+    "X_train = train_pdf[features]\n",
+    "y_train = train_pdf[target]\n",
+    "\n",
+    "model = Pipeline([('scaler', MinMaxScaler()),\n",
+    "                  ('xgb', XGBClassifier(eta=0.2, max_depth=6))])\n",
+    "\n",
+    "model.fit(X_train, y_train)\n",
+    "print(\"Finished training\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "351aa9dd",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "Pipeline(steps=[('scaler', MinMaxScaler()),\n",
+       "                ('xgb', XGBClassifier(eta=0.2, max_depth=6))])"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "e47f8b8e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from nyoka import xgboost_to_pmml\n",
+    "\n",
+    "xgboost_to_pmml(pipeline=model, col_names=features, target_name=target, pmml_f_name=\"model.pmml\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2dbbabb1",
+   "metadata": {},
+   "source": [
+    "## 2.  Carga del modelo"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "cf1a23e2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#model_file = os.path.join(os.path.dirname(teradataml.__file__), \"data\", \"models\", \"iris_db_glm_model.pmml\")\n",
+    "import  datetime\n",
+    "from teradataml import  save_byom "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "3881c098",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Model is saved.\n"
+     ]
+    }
+   ],
+   "source": [
+    "model_file = \"./model.pmml\"\n",
+    "save_byom(\"xgb_model\",\n",
+    "              model_file,\n",
+    "              \"modelos\",\n",
+    "              additional_columns={\"Description\": \"XGBoost\",\n",
+    "                                  \"ModelSavedTime\": datetime.datetime.now(),\n",
+    "                                  \"ModelGeneratedDate\":datetime.date.today(),\n",
+    "                                  \"ModelGeneratedTime\": datetime.time(hour=0,minute=5,second=45,microsecond=110)\n",
+    "                                  },\n",
+    "              schema_name=\"rb255002\"\n",
+    "              )"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "652392d8",
+   "metadata": {},
+   "source": [
+    "## 3. Consultar modelos"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "14a4e9dd",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>model_id</th>\n",
+       "      <th>model</th>\n",
+       "      <th>Description</th>\n",
+       "      <th>ModelSavedTime</th>\n",
+       "      <th>ModelGeneratedDate</th>\n",
+       "      <th>ModelGeneratedTime</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>xgb_model</td>\n",
+       "      <td>b'&lt;?xml version=\"1.0\" encoding=\"UTF-8\"?&gt;\\n&lt;PMML xmlns=\"http://www.dmg.org/PMML-4_4\" version=\"4.4\"&gt;\\n    &lt;Header copyright=\"Copyright (c) 2018 Software AG\" description=\"Default Description\"&gt;\\n        &lt;Application name=\"Nyoka\" version=\"4.3.0\"/&gt;\\n  ...</td>\n",
+       "      <td>XGBoost</td>\n",
+       "      <td>2022-08-29 21:31:15.556957</td>\n",
+       "      <td>2022-08-29</td>\n",
+       "      <td>00:05:45.000110</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "    model_id  \\\n",
+       "0  xgb_model   \n",
+       "\n",
+       "                                                                                                                                                                                                                                                       model  \\\n",
+       "0  b'<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<PMML xmlns=\"http://www.dmg.org/PMML-4_4\" version=\"4.4\">\\n    <Header copyright=\"Copyright (c) 2018 Software AG\" description=\"Default Description\">\\n        <Application name=\"Nyoka\" version=\"4.3.0\"/>\\n  ...   \n",
+       "\n",
+       "  Description             ModelSavedTime ModelGeneratedDate ModelGeneratedTime  \n",
+       "0     XGBoost 2022-08-29 21:31:15.556957         2022-08-29    00:05:45.000110  "
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "pd.options.display.max_colwidth = 250\n",
+    "pd.read_sql(\"SELECT TOP 2 * FROM rb255002.modelos\", get_connection())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "96981e9d",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<style type=\"text/css\">\n",
+       "\ttable {border:ridge 5px;}\n",
+       "\ttable td {border:inset 1px;}\n",
+       "\ttable tr#HeaderRow {background-color:grey; color:white;}</style>\n",
+       "<html><table>\n",
+       "\t<tr id=\"HeaderRow\">\n",
+       "\t\t<th>model_id</th>\n",
+       "\t\t<th>model</th>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>xgb_model</td>\n",
+       "\t\t<td>b'3C3F786D6C20766572...'</td>\n",
+       "\t</tr>\n",
+       "</table></html>"
+      ],
+      "text/plain": [
+       "                              model\n",
+       "model_id                           \n",
+       "xgb_model  b'3C3F786D6C20766572...'"
+      ]
+     },
+     "execution_count": 9,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "modelo = retrieve_byom(\"xgb_model\", table_name=\"modelos\")\n",
+    "modelo"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "e36b95d2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from teradataml import  list_byom"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "8fdc7e24",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "                              model Description              ModelSavedTime ModelGeneratedDate ModelGeneratedTime\n",
+      "model_id                                                                                                         \n",
+      "xgb_model  b'3C3F786D6C20766572...'     XGBoost  2022-08-29 21:31:15.556957         2022/08/29    00:05:45.000110\n"
+     ]
+    }
+   ],
+   "source": [
+    "list_byom(table_name=\"modelos\")\n",
+    "# list_byom(table_name=\"modelos\", model_id=\"xgb_model\")\n"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ec1c040c",
+   "metadata": {},
+   "source": [
+    "## 4. Eliminar modelos"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "73c2467a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    " from teradataml import delete_byom"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "adc1d784",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#delete_byom(model_id=\"xgb_model\", table_name=\"modelos\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "dfddcf77",
+   "metadata": {},
+   "source": [
+    "## 5. Predecir -- modelos"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "id": "d88e171e",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<style type=\"text/css\">\n",
+       "\ttable {border:ridge 5px;}\n",
+       "\ttable td {border:inset 1px;}\n",
+       "\ttable tr#HeaderRow {background-color:grey; color:white;}</style>\n",
+       "<html><table>\n",
+       "\t<tr id=\"HeaderRow\">\n",
+       "\t\t<th>PatientId</th>\n",
+       "\t\t<th>NumTimesPrg</th>\n",
+       "\t\t<th>PlGlcConc</th>\n",
+       "\t\t<th>BloodP</th>\n",
+       "\t\t<th>SkinThick</th>\n",
+       "\t\t<th>TwoHourSerIns</th>\n",
+       "\t\t<th>BMI</th>\n",
+       "\t\t<th>DiPedFunc</th>\n",
+       "\t\t<th>Age</th>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>383</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>90</td>\n",
+       "\t\t<td>62</td>\n",
+       "\t\t<td>18</td>\n",
+       "\t\t<td>59</td>\n",
+       "\t\t<td>25.1</td>\n",
+       "\t\t<td>1.268</td>\n",
+       "\t\t<td>25</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>13</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>189</td>\n",
+       "\t\t<td>60</td>\n",
+       "\t\t<td>23</td>\n",
+       "\t\t<td>846</td>\n",
+       "\t\t<td>30.1</td>\n",
+       "\t\t<td>0.398</td>\n",
+       "\t\t<td>59</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>179</td>\n",
+       "\t\t<td>5</td>\n",
+       "\t\t<td>130</td>\n",
+       "\t\t<td>82</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>39.1</td>\n",
+       "\t\t<td>0.956</td>\n",
+       "\t\t<td>37</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>668</td>\n",
+       "\t\t<td>6</td>\n",
+       "\t\t<td>98</td>\n",
+       "\t\t<td>58</td>\n",
+       "\t\t<td>33</td>\n",
+       "\t\t<td>190</td>\n",
+       "\t\t<td>34.0</td>\n",
+       "\t\t<td>0.43</td>\n",
+       "\t\t<td>43</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>108</td>\n",
+       "\t\t<td>3</td>\n",
+       "\t\t<td>83</td>\n",
+       "\t\t<td>58</td>\n",
+       "\t\t<td>31</td>\n",
+       "\t\t<td>18</td>\n",
+       "\t\t<td>34.3</td>\n",
+       "\t\t<td>0.336</td>\n",
+       "\t\t<td>25</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>364</td>\n",
+       "\t\t<td>4</td>\n",
+       "\t\t<td>147</td>\n",
+       "\t\t<td>74</td>\n",
+       "\t\t<td>25</td>\n",
+       "\t\t<td>293</td>\n",
+       "\t\t<td>34.9</td>\n",
+       "\t\t<td>0.385</td>\n",
+       "\t\t<td>30</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>133</td>\n",
+       "\t\t<td>8</td>\n",
+       "\t\t<td>84</td>\n",
+       "\t\t<td>74</td>\n",
+       "\t\t<td>31</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>38.3</td>\n",
+       "\t\t<td>0.457</td>\n",
+       "\t\t<td>39</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>554</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>84</td>\n",
+       "\t\t<td>64</td>\n",
+       "\t\t<td>23</td>\n",
+       "\t\t<td>115</td>\n",
+       "\t\t<td>36.9</td>\n",
+       "\t\t<td>0.471</td>\n",
+       "\t\t<td>28</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>195</td>\n",
+       "\t\t<td>5</td>\n",
+       "\t\t<td>158</td>\n",
+       "\t\t<td>84</td>\n",
+       "\t\t<td>41</td>\n",
+       "\t\t<td>210</td>\n",
+       "\t\t<td>39.4</td>\n",
+       "\t\t<td>0.395</td>\n",
+       "\t\t<td>29</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>507</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>130</td>\n",
+       "\t\t<td>60</td>\n",
+       "\t\t<td>23</td>\n",
+       "\t\t<td>170</td>\n",
+       "\t\t<td>28.6</td>\n",
+       "\t\t<td>0.6920000000000001</td>\n",
+       "\t\t<td>21</td>\n",
+       "\t</tr>\n",
+       "</table></html>"
+      ],
+      "text/plain": [
+       "           NumTimesPrg  PlGlcConc  BloodP  SkinThick  TwoHourSerIns   BMI  DiPedFunc  Age\n",
+       "PatientId                                                                                \n",
+       "277                  0        104      64         23            116  27.8      0.454   23\n",
+       "732                  2        174      88         37            120  44.5      0.646   24\n",
+       "144                  4        154      62         31            284  32.8      0.237   23\n",
+       "322                  0        124      70         20              0  27.4      0.254   36\n",
+       "588                  3        176      86         27            156  33.3      1.154   52\n",
+       "714                  3        102      74          0              0  29.5      0.121   32\n",
+       "377                  1         87      60         37             75  37.2      0.509   22\n",
+       "434                  1         90      68          8              0  24.5      1.138   36\n",
+       "149                  2         90      70         17              0  27.3      0.085   22\n",
+       "690                  8        107      80          0              0  24.6      0.856   34"
+      ]
+     },
+     "execution_count": 14,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "df = DataFrame('{database}.\"taller_pima_patient_features\"')\n",
+    "df"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "id": "b3dacc06",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "configure.byom_install_location = \"TRNG_BYOM\"\n",
+    "pmml = PMMLPredict(\n",
+    "            modeldata=modelo,\n",
+    "            newdata=df,\n",
+    "            accumulate='PatientId')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "id": "fbf21531",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "############ STDOUT Output ############\n",
+       "\n",
+       "   PatientId prediction                                                                                           json_report\n",
+       "0         36          0    {\"probability_0\":0.7762990235189258,\"predicted_HasDiabetes\":0,\"probability_1\":0.22370097648107423}\n",
+       "1        583          0   {\"probability_0\":0.9753213755679428,\"predicted_HasDiabetes\":0,\"probability_1\":0.024678624432057098}\n",
+       "2        377          0    {\"probability_0\":0.9573951271458577,\"predicted_HasDiabetes\":0,\"probability_1\":0.04260487285414232}\n",
+       "3        396          0   {\"probability_0\":0.9552131883176238,\"predicted_HasDiabetes\":0,\"probability_1\":0.044786811682376144}\n",
+       "4        579          1    {\"probability_0\":0.03812856541346432,\"predicted_HasDiabetes\":1,\"probability_1\":0.9618714345865357}\n",
+       "5        425          1     {\"probability_0\":0.04190902729728396,\"predicted_HasDiabetes\":1,\"probability_1\":0.958090972702716}\n",
+       "6        577          1       {\"probability_0\":0.292597230803771,\"predicted_HasDiabetes\":1,\"probability_1\":0.707402769196229}\n",
+       "7        732          1    {\"probability_0\":0.04864211751705849,\"predicted_HasDiabetes\":1,\"probability_1\":0.9513578824829415}\n",
+       "8        194          0  {\"probability_0\":0.9956425491230634,\"predicted_HasDiabetes\":0,\"probability_1\":0.0043574508769365795}\n",
+       "9        116          1    {\"probability_0\":0.23521258167483572,\"predicted_HasDiabetes\":1,\"probability_1\":0.7647874183251643}"
+      ]
+     },
+     "execution_count": 16,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "pmml"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "id": "847a4c41",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>PatientId</th>\n",
+       "      <th>prediction</th>\n",
+       "      <th>json_report</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>273</td>\n",
+       "      <td>0</td>\n",
+       "      <td>{\"probability_0\":0.9805662801524387,\"predicted_HasDiabetes\":0,\"probability_1\":0.01943371984756128}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>699</td>\n",
+       "      <td>0</td>\n",
+       "      <td>{\"probability_0\":0.8027856013465714,\"predicted_HasDiabetes\":0,\"probability_1\":0.1972143986534286}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>325</td>\n",
+       "      <td>0</td>\n",
+       "      <td>{\"probability_0\":0.5190959793145888,\"predicted_HasDiabetes\":0,\"probability_1\":0.48090402068541116}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>568</td>\n",
+       "      <td>0</td>\n",
+       "      <td>{\"probability_0\":0.890689772275908,\"predicted_HasDiabetes\":0,\"probability_1\":0.10931022772409206}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>319</td>\n",
+       "      <td>1</td>\n",
+       "      <td>{\"probability_0\":0.14088944323861552,\"predicted_HasDiabetes\":1,\"probability_1\":0.8591105567613845}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>...</th>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>763</th>\n",
+       "      <td>412</td>\n",
+       "      <td>0</td>\n",
+       "      <td>{\"probability_0\":0.973575287265374,\"predicted_HasDiabetes\":0,\"probability_1\":0.02642471273462598}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>764</th>\n",
+       "      <td>496</td>\n",
+       "      <td>0</td>\n",
+       "      <td>{\"probability_0\":0.9763723557196795,\"predicted_HasDiabetes\":0,\"probability_1\":0.023627644280320537}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>765</th>\n",
+       "      <td>31</td>\n",
+       "      <td>1</td>\n",
+       "      <td>{\"probability_0\":0.03865647693266128,\"predicted_HasDiabetes\":1,\"probability_1\":0.9613435230673387}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>766</th>\n",
+       "      <td>696</td>\n",
+       "      <td>1</td>\n",
+       "      <td>{\"probability_0\":0.019206081873594294,\"predicted_HasDiabetes\":1,\"probability_1\":0.9807939181264057}</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>767</th>\n",
+       "      <td>683</td>\n",
+       "      <td>1</td>\n",
+       "      <td>{\"probability_0\":0.2844626988900584,\"predicted_HasDiabetes\":1,\"probability_1\":0.7155373011099416}</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "<p>768 rows × 3 columns</p>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "     PatientId prediction  \\\n",
+       "0          273          0   \n",
+       "1          699          0   \n",
+       "2          325          0   \n",
+       "3          568          0   \n",
+       "4          319          1   \n",
+       "..         ...        ...   \n",
+       "763        412          0   \n",
+       "764        496          0   \n",
+       "765         31          1   \n",
+       "766        696          1   \n",
+       "767        683          1   \n",
+       "\n",
+       "                                                                                             json_report  \n",
+       "0     {\"probability_0\":0.9805662801524387,\"predicted_HasDiabetes\":0,\"probability_1\":0.01943371984756128}  \n",
+       "1      {\"probability_0\":0.8027856013465714,\"predicted_HasDiabetes\":0,\"probability_1\":0.1972143986534286}  \n",
+       "2     {\"probability_0\":0.5190959793145888,\"predicted_HasDiabetes\":0,\"probability_1\":0.48090402068541116}  \n",
+       "3      {\"probability_0\":0.890689772275908,\"predicted_HasDiabetes\":0,\"probability_1\":0.10931022772409206}  \n",
+       "4     {\"probability_0\":0.14088944323861552,\"predicted_HasDiabetes\":1,\"probability_1\":0.8591105567613845}  \n",
+       "..                                                                                                   ...  \n",
+       "763    {\"probability_0\":0.973575287265374,\"predicted_HasDiabetes\":0,\"probability_1\":0.02642471273462598}  \n",
+       "764  {\"probability_0\":0.9763723557196795,\"predicted_HasDiabetes\":0,\"probability_1\":0.023627644280320537}  \n",
+       "765   {\"probability_0\":0.03865647693266128,\"predicted_HasDiabetes\":1,\"probability_1\":0.9613435230673387}  \n",
+       "766  {\"probability_0\":0.019206081873594294,\"predicted_HasDiabetes\":1,\"probability_1\":0.9807939181264057}  \n",
+       "767    {\"probability_0\":0.2844626988900584,\"predicted_HasDiabetes\":1,\"probability_1\":0.7155373011099416}  \n",
+       "\n",
+       "[768 rows x 3 columns]"
+      ]
+     },
+     "execution_count": 17,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "\n",
+    "#df=\"\"\" SELECT * FROM TRNG_BYOM.PMMLPredict (\n",
+    "#    ON rb255002.taller_pima_patient_features AS InputTable\n",
+    "#    ON (SELECT * FROM modelos WHERE model_id='xgb_model') AS ModelTable DIMENSION\n",
+    "#    USING\n",
+    "#      Accumulate ('PatientID')\n",
+    "#) AS td;\"\"\"\n",
+    "\n",
+    "#pd.read_sql(qry, get_connection())\n",
+    "\n",
+    "# Moviendo las  predicciones desde Teradata\n",
+    "\n",
+    "predicciones = DataFrame.from_query(\"\"\"\n",
+    "     SELECT * FROM TRNG_BYOM.PMMLPredict (\n",
+    "        ON rb255002.taller_pima_patient_features AS InputTable\n",
+    "        ON (SELECT * FROM modelos WHERE model_id='xgb_model') AS ModelTable DIMENSION\n",
+    "    USING\n",
+    "          Accumulate ('PatientID')\n",
+    "    ) AS td\"\"\").to_pandas()\n",
+    "predicciones"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "id": "fd059814",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Sin Moverlas \n",
+    "prediccionesTD = DataFrame.from_query(\"\"\"\n",
+    "     SELECT * FROM TRNG_BYOM.PMMLPredict (\n",
+    "        ON rb255002.taller_pima_patient_features AS InputTable\n",
+    "        ON (SELECT * FROM modelos WHERE model_id='xgb_model') AS ModelTable DIMENSION\n",
+    "    USING\n",
+    "          Accumulate ('PatientID')\n",
+    "    ) AS td\"\"\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "id": "11112316",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<style type=\"text/css\">\n",
+       "\ttable {border:ridge 5px;}\n",
+       "\ttable td {border:inset 1px;}\n",
+       "\ttable tr#HeaderRow {background-color:grey; color:white;}</style>\n",
+       "<html><table>\n",
+       "\t<tr id=\"HeaderRow\">\n",
+       "\t\t<th>PatientId</th>\n",
+       "\t\t<th>prediction</th>\n",
+       "\t\t<th>json_report</th>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>490</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9554923991091431,\"predicted_HasDiabetes\":0,\"probability_1\":0.044507600890856966}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>181</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.8543539762482569,\"predicted_HasDiabetes\":0,\"probability_1\":0.14564602375174307}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>741</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9754018379437485,\"predicted_HasDiabetes\":0,\"probability_1\":0.024598162056251507}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>551</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9686045933091266,\"predicted_HasDiabetes\":0,\"probability_1\":0.031395406690873325}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>303</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>{\"probability_0\":0.1593008416928824,\"predicted_HasDiabetes\":1,\"probability_1\":0.8406991583071176}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>446</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9967667392499847,\"predicted_HasDiabetes\":0,\"probability_1\":0.0032332607500153033}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>499</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.8822477782779066,\"predicted_HasDiabetes\":0,\"probability_1\":0.11775222172209342}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>78</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>{\"probability_0\":0.07018680078658923,\"predicted_HasDiabetes\":1,\"probability_1\":0.9298131992134108}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>686</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9349565561519769,\"predicted_HasDiabetes\":0,\"probability_1\":0.06504344384802309}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>528</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.978538858801581,\"predicted_HasDiabetes\":0,\"probability_1\":0.021461141198419065}</td>\n",
+       "\t</tr>\n",
+       "</table></html>"
+      ],
+      "text/plain": [
+       "   PatientId prediction                                                                                           json_report\n",
+       "0        481          0    {\"probability_0\":0.9259174493500415,\"predicted_HasDiabetes\":0,\"probability_1\":0.07408255064995851}\n",
+       "1        621          0   {\"probability_0\":0.9765596793096596,\"predicted_HasDiabetes\":0,\"probability_1\":0.023440320690340428}\n",
+       "2         67          0     {\"probability_0\":0.812011732564226,\"predicted_HasDiabetes\":0,\"probability_1\":0.18798826743577401}\n",
+       "3        129          1       {\"probability_0\":0.334440764453224,\"predicted_HasDiabetes\":1,\"probability_1\":0.665559235546776}\n",
+       "4         41          0     {\"probability_0\":0.640672798893176,\"predicted_HasDiabetes\":0,\"probability_1\":0.35932720110682403}\n",
+       "5        251          0    {\"probability_0\":0.9301736987314313,\"predicted_HasDiabetes\":0,\"probability_1\":0.06982630126856866}\n",
+       "6        216          1    {\"probability_0\":0.18563366666834613,\"predicted_HasDiabetes\":1,\"probability_1\":0.8143663333316539}\n",
+       "7        528          0    {\"probability_0\":0.978538858801581,\"predicted_HasDiabetes\":0,\"probability_1\":0.021461141198419065}\n",
+       "8        741          0   {\"probability_0\":0.9754018379437485,\"predicted_HasDiabetes\":0,\"probability_1\":0.024598162056251507}\n",
+       "9        585          0  {\"probability_0\":0.9973702826422619,\"predicted_HasDiabetes\":0,\"probability_1\":0.0026297173577380898}"
+      ]
+     },
+     "execution_count": 19,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "prediccionesTD"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "id": "012b4c35",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from teradataml import copy_to_sql\n",
+    "copy_to_sql(df = prediccionesTD, table_name = \"prediccionDiabetes\", primary_index=\"PatientId\", if_exists=\"replace\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "id": "6e355323",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<style type=\"text/css\">\n",
+       "\ttable {border:ridge 5px;}\n",
+       "\ttable td {border:inset 1px;}\n",
+       "\ttable tr#HeaderRow {background-color:grey; color:white;}</style>\n",
+       "<html><table>\n",
+       "\t<tr id=\"HeaderRow\">\n",
+       "\t\t<th>PatientId</th>\n",
+       "\t\t<th>prediction</th>\n",
+       "\t\t<th>json_report</th>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>733</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9893440145028043,\"predicted_HasDiabetes\":0,\"probability_1\":0.010655985497195698}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>419</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>{\"probability_0\":0.18567191509646086,\"predicted_HasDiabetes\":1,\"probability_1\":0.8143280849035391}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>735</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.8819371031576648,\"predicted_HasDiabetes\":0,\"probability_1\":0.11806289684233517}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>509</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9907120523302234,\"predicted_HasDiabetes\":0,\"probability_1\":0.009287947669776576}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>465</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9738572046383646,\"predicted_HasDiabetes\":0,\"probability_1\":0.026142795361635485}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>617</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9954461425152445,\"predicted_HasDiabetes\":0,\"probability_1\":0.004553857484755449}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>522</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.920327476959031,\"predicted_HasDiabetes\":0,\"probability_1\":0.07967252304096893}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>629</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9982109609619734,\"predicted_HasDiabetes\":0,\"probability_1\":0.0017890390380266115}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>391</td>\n",
+       "\t\t<td>1</td>\n",
+       "\t\t<td>{\"probability_0\":0.07416757525241102,\"predicted_HasDiabetes\":1,\"probability_1\":0.925832424747589}</td>\n",
+       "\t</tr>\n",
+       "\t<tr>\n",
+       "\t\t<td>145</td>\n",
+       "\t\t<td>0</td>\n",
+       "\t\t<td>{\"probability_0\":0.9815069597156939,\"predicted_HasDiabetes\":0,\"probability_1\":0.018493040284306095}</td>\n",
+       "\t</tr>\n",
+       "</table></html>"
+      ],
+      "text/plain": [
+       "          prediction                                                                                           json_report\n",
+       "PatientId                                                                                                                 \n",
+       "322                1     {\"probability_0\":0.2269701305201537,\"predicted_HasDiabetes\":1,\"probability_1\":0.7730298694798463}\n",
+       "144                0    {\"probability_0\":0.9275852871472222,\"predicted_HasDiabetes\":0,\"probability_1\":0.07241471285277779}\n",
+       "579                1    {\"probability_0\":0.03812856541346432,\"predicted_HasDiabetes\":1,\"probability_1\":0.9618714345865357}\n",
+       "277                0   {\"probability_0\":0.9868219135338664,\"predicted_HasDiabetes\":0,\"probability_1\":0.013178086466133629}\n",
+       "396                0   {\"probability_0\":0.9552131883176238,\"predicted_HasDiabetes\":0,\"probability_1\":0.044786811682376144}\n",
+       "588                1   {\"probability_0\":0.016989125555566087,\"predicted_HasDiabetes\":1,\"probability_1\":0.9830108744444339}\n",
+       "36                 0    {\"probability_0\":0.7762990235189258,\"predicted_HasDiabetes\":0,\"probability_1\":0.22370097648107423}\n",
+       "440                1    {\"probability_0\":0.08584747568402806,\"predicted_HasDiabetes\":1,\"probability_1\":0.9141525243159719}\n",
+       "194                0  {\"probability_0\":0.9956425491230634,\"predicted_HasDiabetes\":0,\"probability_1\":0.0043574508769365795}\n",
+       "250                1    {\"probability_0\":0.29048666565965164,\"predicted_HasDiabetes\":1,\"probability_1\":0.7095133343403484}"
+      ]
+     },
+     "execution_count": 23,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "df = DataFrame('rb255002.\"prediccionDiabetes\"')\n",
+    "df"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b12d6f1d",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.7.10"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
