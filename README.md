@@ -6,7 +6,6 @@ Tiene las siguientes carpetas
 - Jupyter
 - shells
 
-
 Comandos GIT
 
 git add .
