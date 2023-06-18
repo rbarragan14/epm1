@@ -8,7 +8,9 @@ Tiene las siguientes carpetas
 
 Comandos GIT
 
-git add .
-git commit -m "comentasrios"
-git push -u origin main
+    > git add .
+    
+    > git commit -m "comentasrios"
+    
+    > git push -u origin main
 
