@@ -1,0 +1,13 @@
+ABRIR JUPYTER
+
+#  Abrir tunnel
+ssh -L 8888:localhost:8888 azureuser@4.227.250.138 
+
+# Activar el ambiente 
+
+cd /teradata/jupyter 
+source dev-env/bin/activate
+
+# Arrancar en este directorio
+cd /teradata/proyecto/jupyter
+jupyter-lab
