@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: DW_DBT
+    description: Tablas cargadas con estructura directamente de las fuentes
+    tables:
+      - name: raw_customers
+      - name: raw_customer_puntos
+      - name: raw_puntosatencion
+
+  

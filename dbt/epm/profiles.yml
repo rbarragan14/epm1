@@ -1,0 +1,11 @@
+epm:
+  target: dev
+  outputs:
+    dev:
+      type: teradata
+      server: 40.121.65.25
+      schema: DW_DBT
+      username: pocuser
+      password: pocuser
+      tmode: ANSI
+  
